@@ -6,17 +6,28 @@ This project is a backend API for a TOEIC Part 5 quiz application. It provides e
 
 ## Architecture Overview
 
-This project uses a layered architecture inspired by Domain-Driven Design (DDD) to separate concerns. It favors a functional programming style and is built on the native Deno runtime, avoiding external web frameworks.
+This project uses a layered architecture inspired by Domain-Driven Design (DDD) to separate concerns. It favors a functional programming style and is built on the native Deno runtime.
 
-1.  **Presentation Layer**: Handles HTTP requests and responses. Implemented directly with `Deno.serve`.
+1.  **Presentation Layer**: Handles HTTP requests and responses. It uses a simple, dependency-free custom router built for this project. The main server is started with `Deno.serve`.
 2.  **Application Layer**: Orchestrates the use cases of the application, implemented as higher-order functions.
 3.  **Domain Layer**: The heart of the application. Contains the core business logic, rules, and types.
-4.  **Infrastructure Layer**: Contains concrete implementations for external concerns, like the mock database.
+4.  **Infrastructure Layer**: Contains concrete implementations for external concerns, primarily the persistence layer which uses Deno KV.
+
+### Custom Router
+
+To keep the project dependency-free, a custom, functional router was created in `lib/router.ts`. It provides a simple way to map HTTP methods and URL patterns to specific handler functions.
+
+- It is created via a `createRouter()` factory function.
+- It supports `router.get(path, handler)` and `router.post(path, handler)`.
+- It uses the standard `URLPattern` API internally for matching routes and extracting path parameters.
+- The main `Deno.serve` function delegates all incoming requests to `router.fetch`.
 
 ## Directory Structure
 
 ```
 .
+├── lib/
+│   └── router.ts
 ├── application/
 │   ├── GetQuestionUseCase.ts
 │   └── SubmitAnswerUseCase.ts
@@ -30,23 +41,26 @@ This project uses a layered architecture inspired by Domain-Driven Design (DDD) 
 │       └── questionId.ts
 ├── infrastructure/
 │   └── persistence/
+│       ├── DenoKvQuestionRepository.ts
 │       ├── MockQuestionRepository.ts
 │       └── QuestionMapper.ts
-└── main.ts
+├── main.ts
+├── seed.ts
+└── deno.json
 ```
 
 ## Code Details
 
-(Domain, Application, and Infrastructure layers remain as previously documented)
+### Presentation Layer (`main.ts`)
 
-### Presentation Layer
+The entry point of the application sets up the dependency injection, defines the route handlers, and starts the server with the custom router.
 
 ```typescript
-// main.ts
 import { createGetQuestionUseCase } from './application/GetQuestionUseCase.ts';
 import { createSubmitAnswerUseCase } from './application/SubmitAnswerUseCase.ts';
 import { createQuestionId } from './domain/value-objects/questionId.ts';
-import { createMockQuestionRepository } from './infrastructure/persistence/MockQuestionRepository.ts';
+import { createDenoKvQuestionRepository } from './infrastructure/persistence/DenoKvQuestionRepository.ts';
+import { createRouter, type Handler } from './lib/router.ts';
 
 // A helper function to create JSON responses.
 const jsonResponse = (data: unknown, status = 200) => {
@@ -56,71 +70,66 @@ const jsonResponse = (data: unknown, status = 200) => {
   });
 };
 
-// --- Composition Root (simplified for native Deno) ---
-const questionRepo = createMockQuestionRepository();
+// --- Composition Root ---
+const questionRepo = createDenoKvQuestionRepository();
 const getQuestionUseCase = createGetQuestionUseCase(questionRepo);
 const submitAnswerUseCase = createSubmitAnswerUseCase(questionRepo);
 
-// --- URL Routing Patterns ---
-const GET_QUESTION_PATTERN = new URLPattern({ pathname: '/questions/:id' });
-const SUBMIT_ANSWER_PATTERN = new URLPattern({
-  pathname: '/questions/:id/answer',
-});
+// --- Route Handlers ---
 
-console.log("Server starting...");
+const getQuestionHandler: Handler = async (_req, match) => {
+  const { id } = match.pathname.groups;
+  const questionId = createQuestionId(id!);
+  const question = await getQuestionUseCase(questionId);
 
-// --- Server ---
-Deno.serve(async (req: Request) => {
-  const url = new URL(req.url);
-  const getMatch = GET_QUESTION_PATTERN.exec(url);
+  if (!question) {
+    return jsonResponse({ error: 'Question not found' }, 404);
+  }
 
-  // Handle GET /questions/:id
-  if (getMatch && req.method === 'GET') {
-    const { id } = getMatch.pathname.groups;
-    const questionId = createQuestionId(id!);
-    const question = await getQuestionUseCase(questionId);
+  // Exclude correct answer details from this endpoint.
+  const publicChoices = question.choices.map(({ label, text }) => ({
+    label,
+    text,
+  }));
+  const publicQuestion = {
+    id: question.id,
+    sentence: question.sentence,
+    choices: publicChoices,
+  };
 
-    if (!question) {
+  return jsonResponse(publicQuestion);
+};
+
+const submitAnswerHandler: Handler = async (req, match) => {
+  const { id } = match.pathname.groups;
+  const questionId = createQuestionId(id!);
+
+  try {
+    const body = (await req.json()) as { submittedLabel: string };
+    const { submittedLabel } = body;
+    if (typeof submittedLabel !== 'string') {
+      return jsonResponse({ error: 'submittedLabel must be a string' }, 400);
+    }
+
+    const result = await submitAnswerUseCase(questionId, submittedLabel);
+
+    if (!result) {
       return jsonResponse({ error: 'Question not found' }, 404);
     }
 
-    const publicChoices = question.choices.map(({ label, text }) => ({ label, text }));
-    const publicQuestion = {
-      id: question.id,
-      sentence: question.sentence,
-      choices: publicChoices,
-    };
-
-    return jsonResponse(publicQuestion);
+    return jsonResponse(result);
+  } catch (_error) {
+    return jsonResponse({ error: 'Invalid request body' }, 400);
   }
+};
 
-  const postMatch = SUBMIT_ANSWER_PATTERN.exec(url);
+// --- Server ---
+console.log('Server starting...');
 
-  // Handle POST /questions/:id/answer
-  if (postMatch && req.method === 'POST') {
-    const { id } = postMatch.pathname.groups;
-    const questionId = createQuestionId(id!);
+const router = createRouter();
+router.get('/questions/:id', getQuestionHandler);
+router.post('/questions/:id/answer', submitAnswerHandler);
 
-    try {
-      const body = (await req.json()) as { submittedLabel: string };
-      const { submittedLabel } = body;
-      if (typeof submittedLabel !== 'string') {
-        return jsonResponse({ error: 'submittedLabel must be a string' }, 400);
-      }
+Deno.serve(router.fetch);
 
-      const result = await submitAnswerUseCase(questionId, submittedLabel);
-
-      if (!result) {
-        return jsonResponse({ error: 'Question not found' }, 404);
-      }
-
-      return jsonResponse(result);
-
-    } catch (_error) {
-      return jsonResponse({ error: 'Invalid request body' }, 400);
-    }
-  }
-
-  return jsonResponse({ error: 'Not Found' }, 404);
-});
 ```

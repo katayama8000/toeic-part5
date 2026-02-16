@@ -1,40 +1,14 @@
-# Database Schema Proposal
+# Database
 
-This document outlines a proposed relational database schema for the TOEIC Part 5 Solver application. The schema is designed to persist the core domain models: `Question`, `Choice`, and `Solution`.
+This project uses [Deno KV](https://deno.land/api@v1.40.5?s=Deno.Kv) as its database.
+Deno KV is a key-value database built into the Deno runtime, providing an easy way to persist data without external dependencies.
 
-## Tables
+## Key Structure
 
-### `questions`
+The primary data entity is the `Question`.
+We store questions using a structured key pattern to allow for efficient retrieval.
 
-This table stores the main question aggregate.
+-   **Primary Key for Questions**: `["questions_by_id", <question_id>]`
+    -   **Value**: The `Question` object, including its properties like `sentence`, `choices`, and `answer`.
 
-| Column       | Type         | Constraints/Description                |
-|--------------|--------------|----------------------------------------|
-| `id`         | `VARCHAR(255)` | Primary Key, unique identifier (e.g., UUID) |
-| `sentence`   | `TEXT`       | The problem sentence with a blank.     |
-| `created_at` | `TIMESTAMP`  | Timestamp of when the record was created. |
-| `updated_at` | `TIMESTAMP`  | Timestamp of the last update.          |
-
-### `choices`
-
-This table stores the multiple-choice options for each question.
-
-| Column        | Type          | Constraints/Description                     |
-|---------------|---------------|---------------------------------------------|
-| `id`          | `BIGINT`      | Primary Key, auto-incrementing integer.     |
-| `question_id` | `VARCHAR(255)`| Foreign Key, references `questions.id`.     |
-| `label`       | `VARCHAR(8)`  | The option label (e.g., "A", "B").          |
-| `text`        | `TEXT`        | The text content of the choice.             |
-
-### `solutions`
-
-This table stores the analysis result for a question. This can be used for caching or logging.
-
-| Column              | Type          | Constraints/Description                        |
-|---------------------|---------------|------------------------------------------------|
-| `id`                | `BIGINT`      | Primary Key, auto-incrementing integer.        |
-| `question_id`       | `VARCHAR(255)`| Foreign Key, references `questions.id`. Unique. |
-| `correct_choice_id` | `BIGINT`      | Foreign Key, references `choices.id`.          |
-| `explanation`       | `TEXT`        | The explanation for why the choice is correct. |
-| `corrected_sentence`| `TEXT`        | The full sentence with the correct answer.     |
-| `analyzed_at`       | `TIMESTAMP`   | Timestamp of when the analysis was performed.  |
+This structure allows for direct lookup of a question by its ID.

@@ -1,7 +1,4 @@
-import type { IQuestionRepository } from '../../domain/interface/IQuestionRepository.ts';
-import { type Question } from '../../domain/entities/question.ts';
-import type { QuestionId } from '../../domain/value-objects/questionId.ts';
-import { QuestionMapper, type QuestionDTO } from './QuestionMapper.ts';
+import type { QuestionDTO } from './infrastructure/persistence/QuestionMapper.ts';
 
 const questionsData: QuestionDTO[] = [
   {
@@ -27,15 +24,10 @@ const questionsData: QuestionDTO[] = [
   },
 ];
 
-export const createMockQuestionRepository = (): IQuestionRepository => {
-  return {
-    findById: async (id: QuestionId): Promise<Question | null> => {
-      const questionData = questionsData.find((q) => q.id === id);
+const kv = await Deno.openKv();
 
-      if (!questionData) {
-        return null;
-      }
-      return QuestionMapper.toEntity(questionData);
-    },
-  };
-};
+for (const question of questionsData) {
+  await kv.set(['questions_by_id', question.id], question);
+}
+
+console.log('✅ Seed data loaded successfully!');
