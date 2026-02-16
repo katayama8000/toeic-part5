@@ -22,24 +22,13 @@ const submitAnswerUseCase = createSubmitAnswerUseCase(questionRepo);
 const getQuestionHandler: Handler = async (_req, match) => {
   const { id } = match.pathname.groups;
   const questionId = createQuestionId(id!);
-  const question = await getQuestionUseCase(questionId);
+  const getQuestionResult = await getQuestionUseCase(questionId);
 
-  if (!question) {
+  if (!getQuestionResult) {
     return jsonResponse({ error: 'Question not found' }, 404);
   }
 
-  // Exclude correct answer details from this endpoint.
-  const publicChoices = question.choices.map(({ label, text }) => ({
-    label,
-    text,
-  }));
-  const publicQuestion = {
-    id: question.id,
-    sentence: question.sentence,
-    choices: publicChoices,
-  };
-
-  return jsonResponse(publicQuestion);
+  return jsonResponse(getQuestionResult);
 };
 
 const submitAnswerHandler: Handler = async (req, match) => {
